@@ -297,10 +297,10 @@ class Spellchecker : public Nan::ObjectWrap {
   }
 };
 
-void Init(Local<Object> exports, Local<Object> module) {
+void Init(Local<Object> exports) {
   Spellchecker::Init(exports);
 }
 
 }  // namespace
 
-NODE_MODULE(spellchecker, Init)
+NAN_MODULE_WORKER_ENABLED(spellchecker, Init)
