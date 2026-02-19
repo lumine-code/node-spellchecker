@@ -115,11 +115,13 @@ class Spellchecker : public Nan::ObjectWrap {
     }
 
     std::vector<uint16_t> text(string->Length() + 1);
-    string->Write(
-#if V8_MAJOR_VERSION > 6
-        info.GetIsolate(),
+#if V8_MAJOR_VERSION >= 14
+    string->WriteV2(info.GetIsolate(), 0, string->Length(), text.data());
+#elif V8_MAJOR_VERSION > 6
+    string->Write(info.GetIsolate(), reinterpret_cast<uint16_t *>(text.data()));
+#else
+    string->Write(reinterpret_cast<uint16_t *>(text.data()));
 #endif
-        reinterpret_cast<uint16_t *>(text.data()));
 
     Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
 
@@ -155,11 +157,13 @@ class Spellchecker : public Nan::ObjectWrap {
     Nan::Callback *callback = new Nan::Callback(info[1].As<Function>());
 
     std::vector<uint16_t> corpus(string->Length() + 1);
-    string->Write(
-#if V8_MAJOR_VERSION > 6
-        info.GetIsolate(),
+#if V8_MAJOR_VERSION >= 14
+    string->WriteV2(info.GetIsolate(), 0, string->Length(), corpus.data());
+#elif V8_MAJOR_VERSION > 6
+    string->Write(info.GetIsolate(), reinterpret_cast<uint16_t *>(corpus.data()));
+#else
+    string->Write(reinterpret_cast<uint16_t *>(corpus.data()));
 #endif
-        reinterpret_cast<uint16_t *>(corpus.data()));
 
     Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
 
@@ -287,7 +291,7 @@ class Spellchecker : public Nan::ObjectWrap {
     Nan::SetPrototypeMethod(tpl, "add", Spellchecker::Add);
     Nan::SetPrototypeMethod(tpl, "remove", Spellchecker::Remove);
 
-    Isolate* isolate = exports->GetIsolate();
+    Isolate* isolate = Isolate::GetCurrent();
     Local<Context> context = isolate->GetCurrentContext();
     Nan::Set(exports, Nan::New("Spellchecker").ToLocalChecked(), tpl->GetFunction(context).ToLocalChecked());
   }
