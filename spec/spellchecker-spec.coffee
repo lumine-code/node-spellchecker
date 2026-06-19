@@ -573,7 +573,7 @@ for testAlwaysUseHunspell in [true, false]
       it 'returns an array of string dictionary names', ->
         # NB: getAvailableDictionaries is nop'ped in hunspell and it also
         # doesn't work inside Appveyor's CI environment
-        return if spellType is 'hunspell' or (process.env.CI && process.platform !== 'win32')
+        return if spellType is 'hunspell' or (process.env.CI && process.platform != 'win32')
 
         dictionaries = @fixture.getAvailableDictionaries()
         console.log '@@@ AVAILABLE DICTIONARIES:', dictionaries
