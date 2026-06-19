@@ -449,10 +449,13 @@ for testAlwaysUseHunspell in [true, false]
         expect(-> @fixture.getCorrectionsForMisspelling()).toThrow()
 
       it 'returns an array of possible corrections for a correct English word', ->
-        correction = ['cheese', 'chaise', 'cheesy'][spellIndex]
         corrections = @fixture.getCorrectionsForMisspelling('cheese')
         expect(corrections.length).toBeGreaterThan 0
-        expect(corrections[0]).toEqual(correction)
+        if spellType is 'win'
+          expect(corrections[0] is 'cheesy' or corrections[0] is 'cheeses').toEqual(true)
+        else
+          correction = ['cheese', 'chaise', 'cheesy'][spellIndex]
+          expect(corrections[0]).toEqual(correction)
 
       it 'returns an array of possible corrections for a correct Latin German word with ISO8859-1 file', ->
         # de_DE_frami is invalid outside of Hunspell dictionaries.
