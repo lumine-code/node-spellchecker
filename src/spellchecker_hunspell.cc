@@ -89,7 +89,7 @@ bool HunspellSpellchecker::IsMisspelled(const std::string& word) {
   }
 
   // If the word is too long, then don't do anything.
-  if (word.length() > MAX_UTF8_BUFFER) {
+  if (word.size() > MAX_UTF8_BUFFER) {
     return false;
   }
 

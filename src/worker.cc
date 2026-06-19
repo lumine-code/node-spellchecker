@@ -1,16 +1,18 @@
 #include "worker.h"
 
-#include "nan.h"
+#include "napi.h"
 #include "spellchecker.h"
 
 #include <string>
 #include <vector>
 #include <utility>
 
+using namespace spellchecker;
+
 CheckSpellingWorker::CheckSpellingWorker(
   std::vector<uint16_t>&& corpus,
   SpellcheckerImplementation* impl,
-  Nan::Callback* callback
+  Napi::Function& callback
 ) : AsyncWorker(callback), corpus(std::move(corpus)), impl(impl)
 {
   // No-op
@@ -26,21 +28,19 @@ void CheckSpellingWorker::Execute() {
   misspelled_ranges = view->CheckSpelling(corpus.data(), corpus.size());
 }
 
-void CheckSpellingWorker::HandleOKCallback() {
-  Nan::HandleScope scope;
+void CheckSpellingWorker::OnOK() {
+  Napi::Env env = Env();
+  Napi::HandleScope scope(env);
 
-  v8::Local<v8::Context> context = Nan::GetCurrentContext();
-  Local<Array> result = Nan::New<Array>();
-  for (auto iter = misspelled_ranges.begin(); iter != misspelled_ranges.end(); ++iter) {
-    size_t index = iter - misspelled_ranges.begin();
-    uint32_t start = iter->start, end = iter->end;
+  Napi::Array result = Napi::Array::New(env);
+  for (size_t index = 0; index < misspelled_ranges.size(); ++index) {
+    const MisspelledRange& range = misspelled_ranges[index];
 
-    Local<Object> misspelled_range = Nan::New<Object>();
-    misspelled_range->Set(context, Nan::New("start").ToLocalChecked(), Nan::New<Integer>(start));
-    misspelled_range->Set(context, Nan::New("end").ToLocalChecked(), Nan::New<Integer>(end));
-    result->Set(context, index, misspelled_range);
+    Napi::Object misspelled_range = Napi::Object::New(env);
+    misspelled_range.Set("start", Napi::Number::New(env, range.start));
+    misspelled_range.Set("end", Napi::Number::New(env, range.end));
+    result.Set(index, misspelled_range);
   }
 
-  Local<Value> argv[] = { Nan::Null(), result };
-  callback->Call(2, argv);
+  Callback().Call({ env.Null(), result });
 }

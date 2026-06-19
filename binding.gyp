@@ -18,7 +18,8 @@
       ['OS=="win"', {
         'msvs_disabled_warnings': [
           4267,  # conversion from 'size_t' to 'int', possible loss of data
-          4530,  # C++ exception handler used, but unwind semantics are not enabled
+          4530,  # C++ exception handler used, but unwind semantics are not
+                 # enabled
           4506,  # no definition for inline function
         ],
       }],
@@ -33,7 +34,19 @@
   'targets': [
     {
       'target_name': 'spellchecker',
-      'include_dirs': [ '<!(node -e "require(\'nan\')")' ],
+      'cflags!': ['-fno-exceptions'],
+      'cflags_cc!': ['-fno-exceptions'],
+      'xcode_settings': {
+        'GCC_ENABLE_CPP_EXCEPTIONS': 'YES',
+        'CLANG_CXX_LIBRARY': 'libc++',
+        'MACOSX_DEPLOYMENT_TARGET': '10.7',
+      },
+      'msvs_settings': {
+        'VCCLCompilerTool': {'ExceptionHandling': 1},
+      },
+      'include_dirs': [
+        '<!(node -p "require(\'node-addon-api\').include_dir")'
+      ],
       'sources': [
         'src/main.cc',
         'src/worker.cc'
@@ -78,6 +91,16 @@
       'targets': [
         {
           'target_name': 'hunspell',
+          'cflags!': ['-fno-exceptions'],
+          'cflags_cc!': ['-fno-exceptions'],
+          'xcode_settings': {
+            'GCC_ENABLE_CPP_EXCEPTIONS': 'YES',
+            'CLANG_CXX_LIBRARY': 'libc++',
+            'MACOSX_DEPLOYMENT_TARGET': '10.7',
+          },
+          'msvs_settings': {
+            'VCCLCompilerTool': {'ExceptionHandling': 1},
+          },
           'type': 'static_library',
           'msvs_guid': 'D5E8DCB2-9C61-446F-8BEE-B18CA0E0936E',
           'defines': [

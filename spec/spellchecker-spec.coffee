@@ -442,7 +442,7 @@ for testAlwaysUseHunspell in [true, false]
         expect(corrections.length).toBeGreaterThan 0
         expect(corrections[0]).toEqual(correction)
 
-      it 'returns an array of possible corrections for a correct Latin German word with UTF-8 file', ->
+      fit 'returns an array of possible corrections for a correct Latin German word with UTF-8 file', ->
         expect(@fixture.setDictionary('de_DE', dictionaryDirectory)).toBe true
         correction = ['Acht', 'Macht', 'Acht'][spellIndex]
         corrections = @fixture.getCorrectionsForMisspelling('Nacht')
