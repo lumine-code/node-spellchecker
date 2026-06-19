@@ -79,7 +79,7 @@ for (let testAlwaysUseHunspell of [true, false]) {
       it('returns true for fr', () => {
         if (spellType !== 'hunspell' && IS_WINDOWS_CI) return;
         expect(
-          () => fixture.setDictionary('fr', dictionaryDirectory)
+          fixture.setDictionary('fr', dictionaryDirectory)
         ).toBe(true);
       });
     });
