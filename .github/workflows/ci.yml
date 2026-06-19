@@ -16,6 +16,12 @@ jobs:
       - uses: actions/setup-node@v2
         with:
           node-version: 20
+      - name: Install Windows spellchecking language packs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Add-WindowsCapability -Online -Name Language.Spellchecking~~~de-DE~0.0.1.0
+          Add-WindowsCapability -Online -Name Language.Spellchecking~~~fr-FR~0.0.1.0
       - name: Install dependencies
         run: npm i
       - name: Run tests
