@@ -576,6 +576,7 @@ for testAlwaysUseHunspell in [true, false]
         return if spellType is 'hunspell' or process.env.CI
 
         dictionaries = @fixture.getAvailableDictionaries()
+        console.log '@@@ AVAILABLE DICTIONARIES:', dictionaries
         expect(Array.isArray(dictionaries)).toBe true
 
         expect(dictionaries.length).toBeGreaterThan 0
