@@ -22,6 +22,12 @@ jobs:
         run: |
           Add-WindowsCapability -Online -Name Language.Spellchecking~~~de-DE~0.0.1.0
           Add-WindowsCapability -Online -Name Language.Spellchecking~~~fr-FR~0.0.1.0
+      - name: Install Windows language packs
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Install-Language de-DE
+          Install-Language fr-FR
       - name: Install dependencies
         run: npm i
       - name: Run tests
