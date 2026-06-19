@@ -571,8 +571,8 @@ for testAlwaysUseHunspell in [true, false]
         @fixture.setDictionary defaultLanguage, dictionaryDirectory
 
       it 'returns an array of string dictionary names', ->
-        # NB: getAvailableDictionaries is nop'ped in hunspell and it also doesn't
-        # work inside Appveyor's CI environment
+        # NB: getAvailableDictionaries is nop'ped in hunspell and it also
+        # doesn't work inside Appveyor's CI environment
         return if spellType is 'hunspell' or process.env.CI
 
         dictionaries = @fixture.getAvailableDictionaries()
@@ -597,8 +597,8 @@ for testAlwaysUseHunspell in [true, false]
     else
       # We can get different results based on using Hunspell, Mac, or Windows
       # checkers. To simplify the rules, we create a variable that contains
-      # 'hunspell', 'mac', or 'win' for filtering. We also create an index variable
-      # to go into arrays.
+      # 'hunspell', 'mac', or 'win' for filtering. We also create an index
+      # variable to go into arrays.
       if process.env.SPELLCHECKER_PREFER_HUNSPELL
         spellType = 'hunspell'
         spellIndex = 0
