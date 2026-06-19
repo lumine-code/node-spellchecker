@@ -1,5 +1,4 @@
 #include <vector>
-#include <iostream>
 #include "napi.h"
 #include "main.h"
 #include "spellchecker.h"
@@ -111,8 +110,11 @@ Napi::Value Spellchecker::CheckSpelling(const Napi::CallbackInfo& info) {
 
   EnsureLoadedImplementation();
 
+  // Include the implicit trailing null terminator that std::u16string
+  // guarantees at data()[size()]; the state machine in CheckSpelling uses
+  // it as a sentinel to flush the final word in the string.
   std::vector<MisspelledRange> misspelled_ranges =
-    impl->CheckSpelling(reinterpret_cast<const uint16_t*>(text.data()), text.size());
+    impl->CheckSpelling(reinterpret_cast<const uint16_t*>(text.data()), text.size() + 1);
 
   for (size_t index = 0; index < misspelled_ranges.size(); ++index) {
     const MisspelledRange& range = misspelled_ranges[index];
@@ -130,7 +132,6 @@ void Spellchecker::CheckSpellingAsync(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
 
   if (info.Length() < 2 || !info[0].IsString()) {
-    std::cout << "Bad!!!" << info.Length() << " / " << info[0].IsString() << std::endl;
     Napi::Error::New(env, "Bad argument").ThrowAsJavaScriptException();
     return;
   }
@@ -140,8 +141,10 @@ void Spellchecker::CheckSpellingAsync(const Napi::CallbackInfo& info) {
 
   EnsureLoadedImplementation();
 
+  // Include the trailing null terminator (see CheckSpelling above) so the
+  // worker's final word gets flushed too.
   CheckSpellingWorker* worker = new CheckSpellingWorker(
-    std::vector<uint16_t>(corpus.begin(), corpus.end()), impl, callback);
+    std::vector<uint16_t>(corpus.data(), corpus.data() + corpus.size() + 1), impl, callback);
   worker->Queue();
 }
 
