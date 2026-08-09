@@ -20,7 +20,10 @@ module.exports = [
   },
   {
     files: ["lib/spellchecker.js"],
-    rules: { "n/no-unpublished-require": "off" },
+    rules: {
+      "n/no-missing-require": "off",
+      "n/no-unpublished-require": "off",
+    },
   },
   {
     files: ["spec/**"],

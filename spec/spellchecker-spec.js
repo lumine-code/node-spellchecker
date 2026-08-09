@@ -41,7 +41,7 @@ deDE =
 
 frFR = "Les robots les plus évolués sont capables de se déplacer et de se recharger par eux-mêmes";
 
-defaultLanguage = process.platform === "darwin" ? "" : "en_US";
+defaultLanguage = "en_US";
 
 dictionaryDirectory = path.join(__dirname, "dictionaries");
 
