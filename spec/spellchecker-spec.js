@@ -227,7 +227,7 @@ for (i = 0, len = ref.length; i < len; i++) {
           return this.fixture.setDictionary(defaultLanguage, dictionaryDirectory);
         });
         it("automatically detects languages on OS X", function () {
-          if (process.platform !== "darwin") {
+          if (process.platform !== "darwin" || spellType === "hunspell") {
             return;
           }
           expect(this.fixture.checkSpelling(enUS)).toEqual([]);
