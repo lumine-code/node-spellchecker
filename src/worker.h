@@ -1,25 +1,30 @@
-#ifndef WORKER_H
-#define WORKER_H
+#ifndef SRC_WORKER_H_
+#define SRC_WORKER_H_
 
-#include "nan.h"
-#include "spellchecker.h"
-
+#include <memory>
 #include <vector>
 
-using namespace spellchecker;
-using namespace v8;
+#include <napi.h>
 
-class CheckSpellingWorker : public Nan::AsyncWorker {
-public:
-  CheckSpellingWorker(std::vector<uint16_t> &&corpus, SpellcheckerImplementation* impl, Nan::Callback* callback);
-  ~CheckSpellingWorker();
+#include "spellchecker.h"
 
-  void Execute();
-  void HandleOKCallback();
-private:
-  const std::vector<uint16_t> corpus;
-  SpellcheckerImplementation* impl;
-  std::vector<MisspelledRange> misspelled_ranges;
+class CheckSpellingWorker : public Napi::AsyncWorker {
+ public:
+  CheckSpellingWorker(
+      std::vector<uint16_t>&& corpus,
+      spellchecker::SpellcheckerImplementation* implementation,
+      const Napi::Function& callback,
+      const Napi::Object& owner);
+  ~CheckSpellingWorker() override = default;
+
+  void Execute() override;
+  void OnOK() override;
+
+ private:
+  const std::vector<uint16_t> corpus_;
+  spellchecker::SpellcheckerImplementation* implementation_;
+  std::vector<spellchecker::MisspelledRange> misspelled_ranges_;
+  Napi::ObjectReference owner_;
 };
 
-#endif
+#endif  // SRC_WORKER_H_

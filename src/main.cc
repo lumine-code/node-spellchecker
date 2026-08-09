@@ -1,302 +1,222 @@
-#include <vector>
+#include <memory>
+#include <string>
 #include <utility>
-#include "nan.h"
+#include <vector>
+
+#include <napi.h>
+
 #include "spellchecker.h"
 #include "worker.h"
 
-using Nan::ObjectWrap;
-using namespace spellchecker;
-using namespace v8;
+using spellchecker::ALWAYS_USE_HUNSPELL;
+using spellchecker::ALWAYS_USE_SYSTEM;
+using spellchecker::MisspelledRange;
+using spellchecker::SpellcheckerFactory;
+using spellchecker::SpellcheckerImplementation;
+using spellchecker::USE_SYSTEM_DEFAULTS;
 
 namespace {
 
-class Spellchecker : public Nan::ObjectWrap {
-  SpellcheckerImplementation* impl;
+Napi::Array RangesToArray(Napi::Env env, const std::vector<MisspelledRange>& ranges) {
+  Napi::Array result = Napi::Array::New(env, ranges.size());
+  for (size_t index = 0; index < ranges.size(); ++index) {
+    Napi::Object range = Napi::Object::New(env);
+    range.Set("start", Napi::Number::New(env, ranges[index].start));
+    range.Set("end", Napi::Number::New(env, ranges[index].end));
+    result.Set(index, range);
+  }
+  return result;
+}
 
-  static NAN_METHOD(New) {
-    Nan::HandleScope scope;
-    Spellchecker* that = new Spellchecker();
-    that->Wrap(info.This());
+std::vector<uint16_t> ToUtf16Buffer(const Napi::Value& value) {
+  const std::u16string text = value.As<Napi::String>().Utf16Value();
+  std::vector<uint16_t> buffer;
+  buffer.reserve(text.size() + 1);
+  for (const char16_t character : text) {
+    buffer.push_back(static_cast<uint16_t>(character));
+  }
+  buffer.push_back(0);
+  return buffer;
+}
 
-    info.GetReturnValue().Set(info.This());
+class Spellchecker : public Napi::ObjectWrap<Spellchecker> {
+ public:
+  static Napi::Function Define(Napi::Env env) {
+    return DefineClass(
+        env,
+        "Spellchecker",
+        {
+            InstanceMethod("setSpellcheckerType", &Spellchecker::SetSpellcheckerType),
+            InstanceMethod("setDictionary", &Spellchecker::SetDictionary),
+            InstanceMethod("getAvailableDictionaries", &Spellchecker::GetAvailableDictionaries),
+            InstanceMethod("getCorrectionsForMisspelling", &Spellchecker::GetCorrectionsForMisspelling),
+            InstanceMethod("isMisspelled", &Spellchecker::IsMisspelled),
+            InstanceMethod("checkSpelling", &Spellchecker::CheckSpelling),
+            InstanceMethod("checkSpellingAsyncCallback", &Spellchecker::CheckSpellingAsync),
+            InstanceMethod("add", &Spellchecker::Add),
+            InstanceMethod("remove", &Spellchecker::Remove),
+        });
   }
 
-  static NAN_METHOD(SetSpellcheckerType) {
-    // Pull out the handle to the spellchecker instance.
-    Nan::HandleScope scope;
+  explicit Spellchecker(const Napi::CallbackInfo& info)
+      : Napi::ObjectWrap<Spellchecker>(info), implementation_(nullptr) {}
 
-    if (info.Length() < 1) {
-      return Nan::ThrowError("Bad argument: missing mode");
+  ~Spellchecker() override = default;
+
+ private:
+  std::unique_ptr<SpellcheckerImplementation> implementation_;
+
+  SpellcheckerImplementation* EnsureImplementation() {
+    if (!implementation_) {
+      implementation_.reset(SpellcheckerFactory::CreateSpellchecker(USE_SYSTEM_DEFAULTS));
+    }
+    return implementation_.get();
+  }
+
+  Napi::Value SetSpellcheckerType(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsNumber()) {
+      Napi::TypeError::New(env, "Bad argument: missing mode").ThrowAsJavaScriptException();
+      return env.Undefined();
+    }
+    if (implementation_) {
+      Napi::Error::New(
+          env,
+          "Cannot call setSpellcheckerType after the dictionary has been configured or used")
+          .ThrowAsJavaScriptException();
+      return env.Undefined();
     }
 
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    // If we already have an implementation, then we want to complain because
-    // we can't handle reinitializing the dictionary paths.
-    if (that->impl) {
-      return Nan::ThrowError("Cannot call SetSpellcheckerType after the dictionary has been configured or used");
-    }
-
-    // Make sure we have a sane value for our enumeration.
-    int modeNumber = info[0]->Int32Value(Nan::GetCurrentContext()).ToChecked();
-    int spellcheckerType = USE_SYSTEM_DEFAULTS;
-
-    switch (modeNumber)
-    {
-      case 0:
+    int type = USE_SYSTEM_DEFAULTS;
+    switch (info[0].As<Napi::Number>().Int32Value()) {
+      case USE_SYSTEM_DEFAULTS:
         break;
-      case 1:
-        spellcheckerType = ALWAYS_USE_SYSTEM;
+      case ALWAYS_USE_SYSTEM:
+        type = ALWAYS_USE_SYSTEM;
         break;
-      case 2:
-        spellcheckerType = ALWAYS_USE_HUNSPELL;
+      case ALWAYS_USE_HUNSPELL:
+        type = ALWAYS_USE_HUNSPELL;
         break;
       default:
-        return Nan::ThrowError("Bad argument: SetSpellcheckerType must be given 0, 1, or 2 as a parameter");
+        Napi::RangeError::New(env, "Spellchecker type must be 0, 1, or 2")
+            .ThrowAsJavaScriptException();
+        return env.Undefined();
     }
 
-    // Create a new one with the appropriate checker type.
-    that->impl = SpellcheckerFactory::CreateSpellchecker(spellcheckerType);
+    implementation_.reset(SpellcheckerFactory::CreateSpellchecker(type));
+    return env.Undefined();
   }
 
-  static NAN_METHOD(SetDictionary) {
-    Nan::HandleScope scope;
-
-    if (info.Length() < 2) {
-      return Nan::ThrowError("Bad arguments");
+  Napi::Value SetDictionary(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsString()) {
+      Napi::TypeError::New(env, "Bad arguments").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    std::string language = *Nan::Utf8String(info[0]);
-    std::string directory = ".";
-    if (info.Length() > 1) {
-      directory = *Nan::Utf8String(info[1]);
-    }
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    bool result = that->impl->SetDictionary(language, directory);
-    info.GetReturnValue().Set(Nan::New(result));
+    const std::string language = info[0].As<Napi::String>().Utf8Value();
+    const std::string directory = info[1].As<Napi::String>().Utf8Value();
+    return Napi::Boolean::New(env, EnsureImplementation()->SetDictionary(language, directory));
   }
 
-  static NAN_METHOD(IsMisspelled) {
-    Nan::HandleScope scope;
-    if (info.Length() < 1) {
-      return Nan::ThrowError("Bad argument");
+  Napi::Value IsMisspelled(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+      Napi::TypeError::New(env, "Bad argument").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-    std::string word = *Nan::Utf8String(info[0]);
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    info.GetReturnValue().Set(Nan::New(that->impl->IsMisspelled(word)));
+    return Napi::Boolean::New(
+        env, EnsureImplementation()->IsMisspelled(info[0].As<Napi::String>().Utf8Value()));
   }
 
-  static NAN_METHOD(CheckSpelling) {
-    Nan::HandleScope scope;
-    if (info.Length() < 1) {
-      return Nan::ThrowError("Bad argument");
+  Napi::Value CheckSpelling(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+      Napi::TypeError::New(env, "Bad argument").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-
-    Local<String> string = Local<String>::Cast(info[0]);
-    if (!string->IsString()) {
-      return Nan::ThrowError("Bad argument");
+    if (info[0].As<Napi::String>().Utf16Value().empty()) {
+      return Napi::Array::New(env);
     }
-
-    Local<Array> result = Nan::New<Array>();
-    info.GetReturnValue().Set(result);
-
-    if (string->Length() == 0) {
-      return;
-    }
-
-    std::vector<uint16_t> text(string->Length() + 1);
-    string->Write(
-#if V8_MAJOR_VERSION > 6
-        info.GetIsolate(),
-#endif
-        reinterpret_cast<uint16_t *>(text.data()));
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    std::vector<MisspelledRange> misspelled_ranges = that->impl->CheckSpelling(text.data(), text.size());
-
-    std::vector<MisspelledRange>::const_iterator iter = misspelled_ranges.begin();
-    v8::Local<v8::Context> context = Nan::GetCurrentContext();
-    for (; iter != misspelled_ranges.end(); ++iter) {
-      size_t index = iter - misspelled_ranges.begin();
-      uint32_t start = iter->start, end = iter->end;
-
-      Local<Object> misspelled_range = Nan::New<Object>();
-      misspelled_range->Set(context, Nan::New("start").ToLocalChecked(), Nan::New<Integer>(start));
-      misspelled_range->Set(context, Nan::New("end").ToLocalChecked(), Nan::New<Integer>(end));
-      result->Set(context, index, misspelled_range);
-    }
+    const std::vector<uint16_t> text = ToUtf16Buffer(info[0]);
+    return RangesToArray(env, EnsureImplementation()->CheckSpelling(text.data(), text.size()));
   }
 
-  static NAN_METHOD(CheckSpellingAsync) {
-    Nan::HandleScope scope;
-    if (info.Length() < 2) {
-      return Nan::ThrowError("Bad argument");
+  Napi::Value CheckSpellingAsync(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 2 || !info[0].IsString() || !info[1].IsFunction()) {
+      Napi::TypeError::New(env, "Bad arguments").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-
-    Local<String> string = Local<String>::Cast(info[0]);
-    if (!string->IsString()) {
-      return Nan::ThrowError("Bad argument");
-    }
-
-    Nan::Callback *callback = new Nan::Callback(info[1].As<Function>());
-
-    std::vector<uint16_t> corpus(string->Length() + 1);
-    string->Write(
-#if V8_MAJOR_VERSION > 6
-        info.GetIsolate(),
-#endif
-        reinterpret_cast<uint16_t *>(corpus.data()));
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    CheckSpellingWorker* worker = new CheckSpellingWorker(std::move(corpus), that->impl, callback);
-    Nan::AsyncQueueWorker(worker);
+    auto* worker = new CheckSpellingWorker(
+        ToUtf16Buffer(info[0]),
+        EnsureImplementation(),
+        info[1].As<Napi::Function>(),
+        info.This().As<Napi::Object>());
+    worker->Queue();
+    return env.Undefined();
   }
 
-  static NAN_METHOD(Add) {
-    Nan::HandleScope scope;
-    if (info.Length() < 1) {
-      return Nan::ThrowError("Bad argument");
+  Napi::Value Add(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+      Napi::TypeError::New(env, "Bad argument").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    std::string word = *Nan::Utf8String(info[0]);
-    that->impl->Add(word);
-    return;
+    EnsureImplementation()->Add(info[0].As<Napi::String>().Utf8Value());
+    return env.Undefined();
   }
 
-  static NAN_METHOD(Remove) {
-    Nan::HandleScope scope;
-    if (info.Length() < 1) {
-      return Nan::ThrowError("Bad argument");
+  Napi::Value Remove(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+      Napi::TypeError::New(env, "Bad argument").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    std::string word = *Nan::Utf8String(info[0]);
-    that->impl->Remove(word);
-    return;
+    EnsureImplementation()->Remove(info[0].As<Napi::String>().Utf8Value());
+    return env.Undefined();
   }
 
-  static NAN_METHOD(GetAvailableDictionaries) {
-    Nan::HandleScope scope;
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    std::string path = ".";
+  Napi::Value GetAvailableDictionaries(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    std::string dictionary_path = ".";
     if (info.Length() > 0) {
-      std::string path = *Nan::Utf8String(info[0]);
+      if (!info[0].IsString()) {
+        Napi::TypeError::New(env, "Bad argument").ThrowAsJavaScriptException();
+        return env.Undefined();
+      }
+      dictionary_path = info[0].As<Napi::String>().Utf8Value();
     }
 
-    std::vector<std::string> dictionaries =
-      that->impl->GetAvailableDictionaries(path);
-
-    v8::Local<v8::Context> context = Nan::GetCurrentContext();
-    Local<Array> result = Nan::New<Array>(dictionaries.size());
-    for (size_t i = 0; i < dictionaries.size(); ++i) {
-      const std::string& dict = dictionaries[i];
-      result->Set(context, i, Nan::New(dict.data(), dict.size()).ToLocalChecked());
+    const std::vector<std::string> dictionaries =
+        EnsureImplementation()->GetAvailableDictionaries(dictionary_path);
+    Napi::Array result = Napi::Array::New(env, dictionaries.size());
+    for (size_t index = 0; index < dictionaries.size(); ++index) {
+      result.Set(index, Napi::String::New(env, dictionaries[index]));
     }
-
-    info.GetReturnValue().Set(result);
+    return result;
   }
 
-  static NAN_METHOD(GetCorrectionsForMisspelling) {
-    Nan::HandleScope scope;
-    if (info.Length() < 1) {
-      return Nan::ThrowError("Bad argument");
+  Napi::Value GetCorrectionsForMisspelling(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    if (info.Length() < 1 || !info[0].IsString()) {
+      Napi::TypeError::New(env, "Bad argument").ThrowAsJavaScriptException();
+      return env.Undefined();
     }
-
-    Spellchecker* that = Nan::ObjectWrap::Unwrap<Spellchecker>(info.Holder());
-
-    // Make sure we have the implementation loaded.
-    Spellchecker::EnsureLoadedImplementation(that);
-
-    std::string word = *Nan::Utf8String(info[0]);
-    std::vector<std::string> corrections =
-      that->impl->GetCorrectionsForMisspelling(word);
-
-    Local<Array> result = Nan::New<Array>(corrections.size());
-    v8::Local<v8::Context> context = Nan::GetCurrentContext();
-    for (size_t i = 0; i < corrections.size(); ++i) {
-      const std::string& word = corrections[i];
-
-      Nan::MaybeLocal<String> val = Nan::New<String>(word.data(), word.size());
-      result->Set(context, i, val.ToLocalChecked());
+    const std::vector<std::string> corrections = EnsureImplementation()->GetCorrectionsForMisspelling(
+        info[0].As<Napi::String>().Utf8Value());
+    Napi::Array result = Napi::Array::New(env, corrections.size());
+    for (size_t index = 0; index < corrections.size(); ++index) {
+      result.Set(index, Napi::String::New(env, corrections[index]));
     }
-
-    info.GetReturnValue().Set(result);
-  }
-
-  Spellchecker() {
-    impl = NULL;
-  }
-
-  // actual destructor
-  virtual ~Spellchecker() {
-    delete impl;
-  }
-
-  static void EnsureLoadedImplementation(Spellchecker *that) {
-    if (!that->impl) {
-      that->impl = SpellcheckerFactory::CreateSpellchecker(USE_SYSTEM_DEFAULTS);
-    }
-  }
-
- public:
-  static void Init(Local<Object> exports) {
-    Local<FunctionTemplate> tpl = Nan::New<FunctionTemplate>(Spellchecker::New);
-
-    tpl->SetClassName(Nan::New<String>("Spellchecker").ToLocalChecked());
-    tpl->InstanceTemplate()->SetInternalFieldCount(1);
-
-    Nan::SetPrototypeMethod(tpl, "setSpellcheckerType", Spellchecker::SetSpellcheckerType);
-    Nan::SetPrototypeMethod(tpl, "setDictionary", Spellchecker::SetDictionary);
-    Nan::SetPrototypeMethod(tpl, "getAvailableDictionaries", Spellchecker::GetAvailableDictionaries);
-    Nan::SetPrototypeMethod(tpl, "getCorrectionsForMisspelling", Spellchecker::GetCorrectionsForMisspelling);
-    Nan::SetPrototypeMethod(tpl, "isMisspelled", Spellchecker::IsMisspelled);
-    Nan::SetPrototypeMethod(tpl, "checkSpelling", Spellchecker::CheckSpelling);
-    Nan::SetPrototypeMethod(tpl, "checkSpellingAsync", Spellchecker::CheckSpellingAsync);
-    Nan::SetPrototypeMethod(tpl, "add", Spellchecker::Add);
-    Nan::SetPrototypeMethod(tpl, "remove", Spellchecker::Remove);
-
-    Isolate* isolate = exports->GetIsolate();
-    Local<Context> context = isolate->GetCurrentContext();
-    Nan::Set(exports, Nan::New("Spellchecker").ToLocalChecked(), tpl->GetFunction(context).ToLocalChecked());
+    return result;
   }
 };
 
-void Init(Local<Object> exports, Local<Object> module) {
-  Spellchecker::Init(exports);
+Napi::Object Initialize(Napi::Env env, Napi::Object exports) {
+  exports.Set("Spellchecker", Spellchecker::Define(env));
+  return exports;
 }
 
 }  // namespace
 
-NODE_MODULE(spellchecker, Init)
+NODE_API_MODULE(spellchecker, Initialize)

@@ -13,7 +13,7 @@
     ],
   },
   'target_defaults': {
-    'cflags_cc': ['-std=c++11'],
+    'cflags_cc': ['-std=c++17'],
     'conditions': [
       ['OS=="win"', {
         'msvs_disabled_warnings': [
@@ -25,7 +25,7 @@
       ['OS=="mac"', {
         'xcode_settings': {
            'CLANG_CXX_LIBRARY': 'libc++',
-           'CLANG_CXX_LANGUAGE_STANDARD': 'c++11'
+           'CLANG_CXX_LANGUAGE_STANDARD': 'c++17'
         }
       }]
     ],
@@ -33,7 +33,9 @@
   'targets': [
     {
       'target_name': 'spellchecker',
-      'include_dirs': [ '<!(node -e "require(\'nan\')")' ],
+      'include_dirs': [ '<!@(node -p "require(\'node-addon-api\').include")' ],
+      'dependencies': [ '<!(node -p "require(\'node-addon-api\').gyp")' ],
+      'defines': [ 'NAPI_DISABLE_CPP_EXCEPTIONS' ],
       'sources': [
         'src/main.cc',
         'src/worker.cc'
@@ -111,7 +113,6 @@
             'vendor/hunspell/src/hunspell/replist.hxx',
             'vendor/hunspell/src/hunspell/suggestmgr.cxx',
             'vendor/hunspell/src/hunspell/suggestmgr.hxx',
-            'vendor/hunspell/src/hunspell/utf_info.hxx',
             'vendor/hunspell/src/hunspell/w_char.hxx',
             'vendor/hunspell/src/parsers/textparser.cxx',
             'vendor/hunspell/src/parsers/textparser.hxx',

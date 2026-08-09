@@ -1,46 +1,33 @@
 #include "worker.h"
 
-#include "nan.h"
-#include "spellchecker.h"
-
-#include <string>
-#include <vector>
+#include <memory>
 #include <utility>
 
 CheckSpellingWorker::CheckSpellingWorker(
-  std::vector<uint16_t>&& corpus,
-  SpellcheckerImplementation* impl,
-  Nan::Callback* callback
-) : AsyncWorker(callback), corpus(std::move(corpus)), impl(impl)
-{
-  // No-op
-}
-
-CheckSpellingWorker::~CheckSpellingWorker()
-{
-  // No-op
-}
+    std::vector<uint16_t>&& corpus,
+    spellchecker::SpellcheckerImplementation* implementation,
+    const Napi::Function& callback,
+    const Napi::Object& owner)
+    : Napi::AsyncWorker(callback),
+      corpus_(std::move(corpus)),
+      implementation_(implementation),
+      owner_(Napi::Persistent(owner)) {}
 
 void CheckSpellingWorker::Execute() {
-  std::unique_ptr<SpellcheckerThreadView> view = impl->CreateThreadView();
-  misspelled_ranges = view->CheckSpelling(corpus.data(), corpus.size());
+  std::unique_ptr<spellchecker::SpellcheckerThreadView> view =
+      implementation_->CreateThreadView();
+  misspelled_ranges_ = view->CheckSpelling(corpus_.data(), corpus_.size());
 }
 
-void CheckSpellingWorker::HandleOKCallback() {
-  Nan::HandleScope scope;
-
-  v8::Local<v8::Context> context = Nan::GetCurrentContext();
-  Local<Array> result = Nan::New<Array>();
-  for (auto iter = misspelled_ranges.begin(); iter != misspelled_ranges.end(); ++iter) {
-    size_t index = iter - misspelled_ranges.begin();
-    uint32_t start = iter->start, end = iter->end;
-
-    Local<Object> misspelled_range = Nan::New<Object>();
-    misspelled_range->Set(context, Nan::New("start").ToLocalChecked(), Nan::New<Integer>(start));
-    misspelled_range->Set(context, Nan::New("end").ToLocalChecked(), Nan::New<Integer>(end));
-    result->Set(context, index, misspelled_range);
+void CheckSpellingWorker::OnOK() {
+  Napi::HandleScope scope(Env());
+  Napi::Array result = Napi::Array::New(Env(), misspelled_ranges_.size());
+  for (size_t index = 0; index < misspelled_ranges_.size(); ++index) {
+    Napi::Object range = Napi::Object::New(Env());
+    range.Set("start", Napi::Number::New(Env(), misspelled_ranges_[index].start));
+    range.Set("end", Napi::Number::New(Env(), misspelled_ranges_[index].end));
+    result.Set(index, range);
   }
-
-  Local<Value> argv[] = { Nan::Null(), result };
-  callback->Call(2, argv);
+  Callback().Call({Env().Null(), result});
+  owner_.Reset();
 }
