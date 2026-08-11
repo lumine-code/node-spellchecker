@@ -28,8 +28,6 @@ var ALWAYS_USE_HUNSPELL,
   spellType,
   testAlwaysUseHunspell;
 
-process.env.SPELLCHECKER_PREFER_HUNSPELL = "1";
-
 ({ Spellchecker, ALWAYS_USE_HUNSPELL } = require("../lib/spellchecker"));
 
 path = require("path");

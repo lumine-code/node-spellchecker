@@ -27,7 +27,7 @@
   ],
   "scripts": {
     "build": "node-gyp rebuild",
-    "test": "jasmine \"spec/**/*-spec.js\"",
+    "test": "jasmine",
     "lint": "eslint . --max-warnings 0 && prettier --check .",
     "format": "prettier --write ."
   },
