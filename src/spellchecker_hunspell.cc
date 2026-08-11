@@ -1,12 +1,95 @@
 #include <cstdio>
+#include <cstring>
 #include <cwctype>
 #include <clocale>
 #include <algorithm>
+#include <string>
 #include "../vendor/hunspell/src/hunspell/hunspell.hxx"
 #include "spellchecker_hunspell.h"
 #include "buffers.h"
 
 namespace spellchecker {
+
+namespace {
+
+// `iswalpha` and friends answer according to the locale, and the word scan
+// below assumes a UTF-8 one.
+//
+// This has to run on whichever thread is doing the scanning: a C runtime
+// configured for per-thread locales gives each worker thread its own, so
+// setting it once for the process would leave every other thread classifying
+// under "C" and the scan would stop recognising accented letters. Ask before
+// setting, so the common case does not keep rewriting state the whole process
+// may be sharing.
+void EnsureCTypeLocale() {
+  static const char kLocale[] = "en_US.UTF-8";
+
+  const char* current = setlocale(LC_CTYPE, NULL);
+  if (current && strcmp(current, kLocale) == 0) return;
+
+  setlocale(LC_CTYPE, kLocale);
+}
+
+// Remembers what `Hunspell::spell` said about a word for the rest of one check.
+//
+// Prose repeats itself steeply — a handful of words carry most of the
+// occurrences — and the dictionary lookup is the bulk of a check's time, so
+// most of that work is the same question asked again. A hash map would answer
+// it, but it allocates a node per distinct word, and text where nothing repeats
+// (a minified blob, a base64 payload) would pay that for no return.
+//
+// This is direct-mapped and stores its keys inline, so it never allocates per
+// word and never grows: a colliding word evicts the previous occupant and costs
+// one ordinary lookup. Words too long to store inline skip it, which by the same
+// steep distribution are the ones least likely to repeat.
+class WordVerdictCache {
+ public:
+  WordVerdictCache() : slots_(kSlotCount) {}
+
+  const bool* Lookup(const char* word, size_t length) const {
+    if (length >= kMaxWordLength) return NULL;
+    const Slot& slot = slots_[Index(word, length)];
+    if (!slot.occupied || slot.length != length) return NULL;
+    if (memcmp(slot.word, word, length) != 0) return NULL;
+    return &slot.misspelled;
+  }
+
+  void Store(const char* word, size_t length, bool misspelled) {
+    if (length >= kMaxWordLength) return;
+    Slot& slot = slots_[Index(word, length)];
+    memcpy(slot.word, word, length);
+    slot.length = static_cast<uint8_t>(length);
+    slot.misspelled = misspelled;
+    slot.occupied = true;
+  }
+
+ private:
+  static const size_t kSlotCount = 4096;  // a power of two, so Index can mask
+  static const size_t kMaxWordLength = 24;
+
+  struct Slot {
+    char word[kMaxWordLength];
+    uint8_t length;
+    bool misspelled;
+    bool occupied;
+
+    Slot() : length(0), misspelled(false), occupied(false) {}
+  };
+
+  static size_t Index(const char* word, size_t length) {
+    // FNV-1a.
+    uint32_t hash = 2166136261u;
+    for (size_t i = 0; i < length; i++) {
+      hash ^= static_cast<unsigned char>(word[i]);
+      hash *= 16777619u;
+    }
+    return hash & (kSlotCount - 1);
+  }
+
+  std::vector<Slot> slots_;
+};
+
+}  // namespace
 
 HunspellSpellchecker::HunspellSpellchecker() : hunspell(NULL), transcoder(NewUTF16ToUTF8Transcoder()), toDictionaryTranscoder(NULL), fromDictionaryTranscoder(NULL) { }
 
@@ -115,6 +198,14 @@ std::vector<MisspelledRange> HunspellSpellchecker::CheckSpelling(const uint16_t 
 
   std::vector<char> utf8_buffer(MAX_UTF16_TO_UTF8_BUFFER);
 
+  // Reused by every word rather than allocated per word. A megabyte of prose is
+  // upwards of a hundred thousand words, and this buffer is half a kilobyte.
+  std::vector<char> dict_buffer(MAX_TRANSCODE_BUFFER);
+
+  // The dictionary cannot change while this call is running, so a verdict is
+  // good for the rest of it.
+  WordVerdictCache seen;
+
   enum {
     unknown,
     in_separator,
@@ -125,7 +216,7 @@ std::vector<MisspelledRange> HunspellSpellchecker::CheckSpelling(const uint16_t 
   // way, we need to make sure our iswalpha works on UTF-8 strings. We picked a
   // generic locale because we don't pass the locale in. Sadly, "C.utf8" doesn't
   // work so we assume that US English is available everywhere.
-  setlocale(LC_CTYPE, "en_US.UTF-8");
+  EnsureCTypeLocale();
 
   // Go through the UTF-16 characters and look for breaks.
   for (size_t word_start = 0, i = 0; i < utf16_length; i++) {
@@ -155,13 +246,32 @@ std::vector<MisspelledRange> HunspellSpellchecker::CheckSpelling(const uint16_t 
           bool converted = TranscodeUTF16ToUTF8(transcoder, (char *)utf8_buffer.data(), utf8_buffer.size(), utf16_text + word_start, i - word_start);
 
           if (converted) {
-            // Convert the buffer into a dictionary-specific encoding.
-            std::vector<char> dict_buffer(MAX_TRANSCODE_BUFFER);
-            converted = Transcode8to8(toDictionaryTranscoder, dict_buffer.data(), dict_buffer.size(), utf8_buffer.data(), utf8_buffer.size());
+            const size_t utf8_length = strlen(utf8_buffer.data());
+            const char *word = utf8_buffer.data();
+
+            // Convert into the dictionary's encoding, if it wants one that is
+            // not UTF-8. Passing the buffer's capacity as the source length
+            // rather than the word's would transcode the whole buffer for every
+            // word.
+            if (toDictionaryTranscoder) {
+              converted = Transcode8to8(toDictionaryTranscoder, dict_buffer.data(), dict_buffer.size(), utf8_buffer.data(), utf8_length);
+              word = dict_buffer.data();
+            }
 
             if (converted) {
               // Pass in the dictionary-encoded text for spelling.
-              if (hunspell->spell(dict_buffer.data()) == 0) {
+              const size_t word_length = toDictionaryTranscoder ? strlen(word) : utf8_length;
+              const bool* cached = seen.Lookup(word, word_length);
+              bool misspelled;
+
+              if (cached) {
+                misspelled = *cached;
+              } else {
+                misspelled = hunspell->spell(word) == 0;
+                seen.Store(word, word_length, misspelled);
+              }
+
+              if (misspelled) {
                 MisspelledRange range;
                 range.start = word_start;
                 range.end = i;
