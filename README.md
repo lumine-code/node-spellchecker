@@ -1,4 +1,4 @@
-# node-spellchecker
+# spellchecker
 
 Provides native system and Hunspell dictionary bindings.
 
