@@ -44,6 +44,8 @@ public:
   uv_mutex_t &GetGlobalTableMutex();
 
 private:
+  std::wstring ResolveDefaultLanguage();
+
   uv_mutex_t gTableMutex;
   bool gTableMutexOk;
   IGlobalInterfaceTable* gTable;

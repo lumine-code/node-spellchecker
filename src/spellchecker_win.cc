@@ -213,6 +213,54 @@ bool WindowsSpellchecker::IsSupported() {
   return !(g_COMFailed || (this->spellcheckerFactory == NULL));
 }
 
+// Picks a language for a caller that did not name one. The user's own locale
+// first; then its language without the region, because a machine that spell
+// checks English is not guaranteed to list `en-US` among its supported tags;
+// then whatever the factory does list, so an installation with only one
+// language configured still works.
+std::wstring WindowsSpellchecker::ResolveDefaultLanguage() {
+  if (!this->spellcheckerFactory) {
+    return std::wstring();
+  }
+
+  std::vector<std::wstring> candidates;
+
+  wchar_t userLocale[LOCALE_NAME_MAX_LENGTH];
+  if (GetUserDefaultLocaleName(userLocale, LOCALE_NAME_MAX_LENGTH) > 0) {
+    std::wstring locale(userLocale);
+    candidates.push_back(locale);
+
+    const size_t region = locale.find(L'-');
+    if (region != std::wstring::npos) {
+      candidates.push_back(locale.substr(0, region));
+    }
+  }
+
+  for (const std::wstring& candidate : candidates) {
+    BOOL isSupported = FALSE;
+    if (FAILED(this->spellcheckerFactory->IsSupported(candidate.c_str(), &isSupported))) {
+      continue;
+    }
+
+    if (isSupported) return candidate;
+  }
+
+  IEnumString* langList;
+  if (FAILED(this->spellcheckerFactory->get_SupportedLanguages(&langList))) {
+    return std::wstring();
+  }
+
+  std::wstring first;
+  LPOLESTR supported;
+  if (langList->Next(1, &supported, NULL) == S_OK) {
+    first.assign(supported);
+    CoTaskMemFree(supported);
+  }
+
+  langList->Release();
+  return first;
+}
+
 bool WindowsSpellchecker::SetDictionary(const std::string& language, const std::string& path) {
   if (!this->spellcheckerFactory) {
     return false;
@@ -236,14 +284,25 @@ bool WindowsSpellchecker::SetDictionary(const std::string& language, const std::
   std::string lang = language;
   std::replace(lang.begin(), lang.end(), '_', '-');
 
-  std::wstring wlanguage = ToWString(lang);
-  BOOL isSupported;
+  std::wstring wlanguage;
 
-  if (FAILED(this->spellcheckerFactory->IsSupported(wlanguage.c_str(), &isSupported))) {
-    return false;
+  if (lang.empty()) {
+    // An empty language means "whatever the user's system is set to", which is
+    // what the macOS implementation has always done and what callers asking for
+    // the system checker without naming a locale expect. There is no empty tag
+    // to hand the factory, so resolve one.
+    wlanguage = this->ResolveDefaultLanguage();
+    if (wlanguage.empty()) return false;
+  } else {
+    wlanguage = ToWString(lang);
+
+    BOOL isSupported;
+    if (FAILED(this->spellcheckerFactory->IsSupported(wlanguage.c_str(), &isSupported))) {
+      return false;
+    }
+
+    if (!isSupported) return false;
   }
-
-  if (!isSupported) return false;
 
   if (FAILED(this->spellcheckerFactory->CreateSpellChecker(wlanguage.c_str(), &this->currentSpellchecker))) {
     return false;
