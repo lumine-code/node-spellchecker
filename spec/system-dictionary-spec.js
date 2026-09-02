@@ -4,14 +4,10 @@ const { Spellchecker, ALWAYS_USE_SYSTEM } = require("../lib/spellchecker");
 
 // The system service exists on Windows and macOS; Linux has Hunspell only.
 const hasSystemService = process.platform === "win32" || process.platform === "darwin";
+const systemServiceSuite = hasSystemService ? describe : () => {};
 
-describe("setDictionary with no language", () => {
+systemServiceSuite("setDictionary with no language", () => {
   it("selects a system default rather than failing", () => {
-    if (!hasSystemService) {
-      pending("no system spelling service on this platform");
-      return;
-    }
-
     const checker = new Spellchecker();
     checker.setSpellcheckerType(ALWAYS_USE_SYSTEM);
 
@@ -23,11 +19,6 @@ describe("setDictionary with no language", () => {
   });
 
   it("still rejects a language the system does not have", () => {
-    if (!hasSystemService) {
-      pending("no system spelling service on this platform");
-      return;
-    }
-
     const checker = new Spellchecker();
     checker.setSpellcheckerType(ALWAYS_USE_SYSTEM);
 
