@@ -424,13 +424,6 @@ for (i = 0, len = ref.length; i < len; i++) {
             ]);
           }
         });
-        // # Linux doesn't seem to handle 4-byte encodings, so this test is just to
-        // # comment that fact.
-        // xit 'returns values for a string of 64 4-byte character strings', ->
-        //   expect(@fixture.checkSpelling(maximumLength4BytePair)).toEqual [
-        //     {start: 0, end: 128},
-        //     {start: 129, end: 257},
-        //   ]
         it("returns nothing for a pair of 257 1-byte character strings", function () {
           if (process.platform === "linux") {
             return expect(this.fixture.checkSpelling(invalidLength1BytePair)).toEqual([]);
@@ -499,16 +492,6 @@ for (i = 0, len = ref.length; i < len; i++) {
             return this.fixture.checkSpelling(invalidLength3BytePair);
           }
         });
-        // # Linux doesn't seem to handle 4-byte encodings
-        //it 'returns values for a string of 64 4-byte character strings with encoding', ->
-        //  # de_DE_frami is invalid outside of Hunspell dictionaries.
-        //  return unless spellType is 'hunspell'
-
-        //  @fixture.setDictionary('de_DE_frami', dictionaryDirectory)
-        //  expect(@fixture.checkSpelling(maximumLength4BytePair)).toEqual [
-        //    {start: 0, end: 128},
-        //    {start: 129, end: 257},
-        //  ]
         it("returns nothing for a pair of 257 1-byte character strings with encoding", function () {
           if (process.platform === !"linux") {
             // de_DE_frami is invalid outside of Hunspell dictionaries.
